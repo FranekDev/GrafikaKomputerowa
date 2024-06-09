@@ -1,0 +1,422 @@
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<script type="text/javascript">
+var gl;
+var shaderProgram;
+var uPMatrix;
+var vertexPositionBuffer;
+var vertexColorBuffer;
+function MatrixMul(a,b) //Mnożenie macierzy
+{
+  c = [
+  0,0,0,0,
+  0,0,0,0,
+  0,0,0,0,
+  0,0,0,0
+  ]
+  for(let i=0;i<4;i++)
+  {
+    for(let j=0;j<4;j++)
+    {
+      c[i*4+j] = 0.0;
+      for(let k=0;k<4;k++)
+      {
+        c[i*4+j]+= a[i*4+k] * b[k*4+j];
+      }
+    }
+  }
+  return c;
+}
+
+function startGL() 
+{
+  alert("StartGL");
+  let canvas = document.getElementById("canvas3D"); //wyszukanie obiektu w strukturze strony 
+  gl = canvas.getContext("experimental-webgl"); //pobranie kontekstu OpenGL'u z obiektu canvas
+  gl.viewportWidth = canvas.width; //przypisanie wybranej przez nas rozdzielczości do systemu OpenGL
+  gl.viewportHeight = canvas.height;
+
+  //Kod shaderów
+  const vertextShaderSource = ` //Znak akcentu z przycisku tyldy - na lewo od przycisku 1 na klawiaturze
+    precision highp float;
+    attribute vec3 aVertexPosition; 
+    attribute vec3 aVertexColor;
+    attribute vec2 aVertexCoords;
+    uniform mat4 uMVMatrix;
+    uniform mat4 uPMatrix;
+    varying vec3 vColor;
+    varying vec2 vTexUV;
+    void main(void) {
+      gl_Position = uPMatrix * uMVMatrix * vec4(aVertexPosition, 1.0); //Dokonanie transformacji położenia punktów z przestrzeni 3D do przestrzeni obrazu (2D)
+      vColor = aVertexColor;
+      vTexUV = aVertexCoords;
+    }
+  `;
+  const fragmentShaderSource = `
+    precision highp float;
+    varying vec3 vColor;
+    varying vec2 vTexUV;
+    uniform sampler2D uSampler;
+    void main(void) {
+      //gl_FragColor = vec4(vColor,1.0); //Ustalenie stałego koloru wszystkich punktów sceny
+      gl_FragColor = texture2D(uSampler,vTexUV); //Odczytanie punktu tekstury i przypisanie go jako koloru danego punktu renderowaniej figury
+    }
+  `;
+  let fragmentShader = gl.createShader(gl.FRAGMENT_SHADER); //Stworzenie obiektu shadera 
+  let vertexShader   = gl.createShader(gl.VERTEX_SHADER);
+  gl.shaderSource(fragmentShader, fragmentShaderSource); //Podpięcie źródła kodu shader
+  gl.shaderSource(vertexShader, vertextShaderSource);
+  gl.compileShader(fragmentShader); //Kompilacja kodu shader
+  gl.compileShader(vertexShader);
+  if (!gl.getShaderParameter(fragmentShader, gl.COMPILE_STATUS)) { //Sprawdzenie ewentualnych błedów kompilacji
+    alert(gl.getShaderInfoLog(fragmentShader));
+    return null;
+  }
+  if (!gl.getShaderParameter(vertexShader, gl.COMPILE_STATUS)) {
+    alert(gl.getShaderInfoLog(vertexShader));
+    return null;
+  }
+
+  shaderProgram = gl.createProgram(); //Stworzenie obiektu programu 
+  gl.attachShader(shaderProgram, vertexShader); //Podpięcie obu shaderów do naszego programu wykonywanego na karcie graficznej
+  gl.attachShader(shaderProgram, fragmentShader);
+  gl.linkProgram(shaderProgram);
+  if (!gl.getProgramParameter(shaderProgram, gl.LINK_STATUS)) alert("Could not initialise shaders");  //Sprawdzenie ewentualnych błedów
+
+  function createPositionMatrix(x, y, z, scale = 1.0) {
+    const xLeft = x - scale;
+    const xRight = x + scale;
+
+    const scaleUp = scale ;
+    const scaleDown = -scale;
+
+    const yTop = y + scaleUp;
+    const yBottom = y + scaleDown;
+
+    const zFront = z + scaleUp;
+    const zBack = z + scaleDown;
+
+  //Opis sceny 3D, położenie punktów w przestrzeni 3D w formacie X,Y,Z 
+  let vertexPosition = [
+  //Top
+    xLeft,  yTop,    zBack,    xLeft,  yTop,    zFront,   xRight, yTop,    zFront, //3 punkty po 3 składowe - X1,Y1,Z1, X2,Y2,Z2, X3,Y3,Z3 - 1 trójkąt
+    xLeft,  yTop,    zBack,    xRight, yTop,    zFront,   xRight, yTop,    zBack,
+  //Left
+    xLeft,  yBottom, zFront,   xLeft,  yTop,    zFront,   xLeft,  yBottom, zBack,
+    xLeft,  yBottom, zBack,    xLeft,  yTop,    zFront,   xLeft,  yTop,    zBack,
+  //Right
+    xRight, yTop,    zFront,   xRight, yBottom, zFront,   xRight, yBottom, zBack,
+    xRight, yTop,    zFront,   xRight, yBottom, zBack,    xRight, yTop,    zBack,
+  //Front
+    xRight, yBottom, zFront,   xRight, yTop,    zFront,   xLeft,  yBottom, zFront,
+    xLeft,  yTop,    zFront,   xLeft,  yBottom, zFront,   xRight, yTop,    zFront,
+  //Back
+    xRight, yTop,    zBack,    xRight, yBottom, zBack,    xLeft,  yBottom, zBack,
+    xRight, yTop,    zBack,    xLeft,  yBottom, zBack,    xLeft,  yTop,    zBack,
+  //Bottom
+    xLeft,  yBottom, zFront,   xLeft,  yBottom, zBack,    xRight, yBottom, zFront,
+    xRight, yBottom, zFront,   xLeft,  yBottom, zBack,    xRight, yBottom, zBack
+  ]
+
+  return vertexPosition;
+}
+
+const earthSize = 1;
+
+const planetSizes = {
+  sun: 5.0 * earthSize,
+  mercury: 0.3 * earthSize,
+  venus: 0.9 * earthSize,
+  earth: earthSize,
+  mars: 0.55 * earthSize,
+  jupiter: 4.0 * earthSize,
+  saturn: 2.0 * earthSize,
+  uranus: 1.8 * earthSize,
+  neptune: 1.5 * earthSize
+};
+
+let vertexPosition = [
+...createPositionMatrix(0, 0, 0, planetSizes.sun), // sun
+  ...createPositionMatrix(20, 0, 0, planetSizes.mercury), // mercury
+  ...createPositionMatrix(25, 0, 0, planetSizes.venus), // venus
+  ...createPositionMatrix(30, 0, 0, planetSizes.earth), // earth
+  ...createPositionMatrix(38, 0, 0, planetSizes.mars), // mars
+  ...createPositionMatrix(40, 0, 0, planetSizes.jupiter), // jupiter
+  ...createPositionMatrix(53, 0, 0, planetSizes.saturn), // saturn
+  ...createPositionMatrix(63, 0, 0, planetSizes.uranus), // uranus
+  ...createPositionMatrix(70, 0, 0, planetSizes.neptune), // neptune
+];
+
+let rotationAngle = 0;
+
+function animate() {
+  rotationAngle += 0.000005; // Predkosc obrotu
+  let selfRotationAngle = rotationAngle * 4; // Predkosc obrotu wokol wlasnej osi
+  let verticesPerPlanet = 36;
+
+  // srodek slonca
+  let sunCenterX = 0;
+  let sunCenterY = 0;
+  let sunCenterZ = 0;
+  for (let j = 0; j < verticesPerPlanet * 3; j += 3) {
+    sunCenterX += vertexPosition[j];
+    sunCenterY += vertexPosition[j + 1];
+    sunCenterZ += vertexPosition[j + 2];
+  }
+  sunCenterX /= verticesPerPlanet;
+  sunCenterY /= verticesPerPlanet;
+  sunCenterZ /= verticesPerPlanet;
+
+  // Obrot slonca wokol wlasnej osi
+  for (let j = 0; j < verticesPerPlanet * 3; j += 3) {
+    let relativeX = vertexPosition[j] - sunCenterX;
+    let relativeY = vertexPosition[j + 1] - sunCenterY;
+    let relativeZ = vertexPosition[j + 2] - sunCenterZ;
+
+    let newVertexX = relativeX * Math.cos(selfRotationAngle) - relativeZ * Math.sin(selfRotationAngle);
+    let newVertexZ = relativeX * Math.sin(selfRotationAngle) + relativeZ * Math.cos(selfRotationAngle);
+
+    vertexPosition[j] += newVertexX - relativeX;
+    vertexPosition[j + 2] += newVertexZ - relativeZ;
+  }
+
+  // Obroty reszty planet
+  for (let i = verticesPerPlanet * 3; i < vertexPosition.length; i += verticesPerPlanet * 3) {
+    let planetRotationAngle = rotationAngle / ((i - verticesPerPlanet * 3) / (verticesPerPlanet * 3) + 1);
+
+    let centerX = 0, centerY = 0, centerZ = 0;
+    for (let j = 0; j < verticesPerPlanet * 3; j += 3) {
+      centerX += vertexPosition[i + j];
+      centerY += vertexPosition[i + j + 1];
+      centerZ += vertexPosition[i + j + 2];
+    }
+    centerX /= verticesPerPlanet;
+    centerY /= verticesPerPlanet;
+    centerZ /= verticesPerPlanet;
+
+    let newCenterX = centerX * Math.cos(planetRotationAngle) - centerZ * Math.sin(planetRotationAngle);
+    let newCenterZ = centerX * Math.sin(planetRotationAngle) + centerZ * Math.cos(planetRotationAngle);
+
+    for (let j = 0; j < verticesPerPlanet * 3; j += 3) {
+      vertexPosition[i + j] += newCenterX - centerX;
+      vertexPosition[i + j + 2] += newCenterZ - centerZ;
+
+      let relativeX = vertexPosition[i + j] - newCenterX;
+      let relativeY = vertexPosition[i + j + 1] - centerY;
+      let relativeZ = vertexPosition[i + j + 2] - newCenterZ;
+
+      let newVertexX = relativeX * Math.cos(selfRotationAngle) - relativeZ * Math.sin(selfRotationAngle);
+      let newVertexZ = relativeX * Math.sin(selfRotationAngle) + relativeZ * Math.cos(selfRotationAngle);
+
+      vertexPosition[i + j] += newVertexX - relativeX;
+      vertexPosition[i + j + 2] += newVertexZ - relativeZ;
+    }
+  }
+
+  gl.bindBuffer(gl.ARRAY_BUFFER, vertexPositionBuffer);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(vertexPosition), gl.STATIC_DRAW);
+
+  requestAnimationFrame(animate);
+}
+animate();
+
+vertexPositionBuffer = gl.createBuffer(); //Stworzenie tablicy w pamieci karty graficznej
+gl.bindBuffer(gl.ARRAY_BUFFER, vertexPositionBuffer);
+gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(vertexPosition), gl.STATIC_DRAW);
+vertexPositionBuffer.itemSize = 3; //zdefiniowanie liczby współrzednych per wierzchołek
+vertexPositionBuffer.numItems = vertexPosition.length / 9; //Zdefinoiowanie liczby punktów w naszym buforze
+
+
+function createVertexCoords(vLevel) {
+  // Calculate the V coordinates for the top and bottom of the image
+  let vTop = (vLevel / 9) - 0.0055;
+  let vBottom = ((vLevel + 1) / 9) - 0.0055;
+
+  let vertexCoords = [
+    // Top
+    0.0, vTop,  1.0, vTop,  1.0, vBottom,
+    0.0, vTop,  1.0, vBottom,  0.0, vBottom,
+    // Left
+    0.0, vTop,  1.0, vTop,  1.0, vBottom,
+    0.0, vTop,  1.0, vBottom,  0.0, vBottom,
+    // Right
+    0.0, vTop,  1.0, vTop,  1.0, vBottom,
+    0.0, vTop,  1.0, vBottom,  0.0, vBottom,
+    // Front
+    0.0, vTop,  1.0, vTop,  0.0, vBottom, // dolny trojkat
+    0.0, vTop,  1.0, vBottom,  0.0, vBottom,
+    // Back
+    0.0, vTop,  1.0, vTop,  1.0, vBottom,
+    0.0, vTop,  1.0, vBottom,  0.0, vBottom,
+    // Bottom
+    0.0, vTop,  1.0, vTop,  1.0, vBottom,
+    0.0, vTop,  1.0, vBottom,  0.0, vBottom,
+  ];
+
+  return vertexCoords;
+}
+
+let vertexCoords = [
+  ...createVertexCoords(0), // sun
+  ...createVertexCoords(1), // merkury
+  ...createVertexCoords(2), // wenus
+  ...createVertexCoords(3), // earth
+  ...createVertexCoords(4), // mars
+  ...createVertexCoords(5), // jupiter
+  ...createVertexCoords(6), // saturn
+  ...createVertexCoords(7), // uran
+  ...createVertexCoords(8), // neptune
+];
+
+  vertexCoordsBuffer = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, vertexCoordsBuffer);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(vertexCoords), gl.STATIC_DRAW);
+  vertexCoordsBuffer.itemSize = 2;
+  vertexCoordsBuffer.numItems = vertexPosition.length / 9;
+
+  textureBuffer = gl.createTexture();
+  var textureImg = new Image();
+  textureImg.onload = function() { //Wykonanie kodu automatycznie po załadowaniu obrazka
+    gl.bindTexture(gl.TEXTURE_2D, textureBuffer);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, textureImg); //Faktyczne załadowanie danych obrazu do pamieci karty graficznej
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE); //Ustawienie parametrów próbkowania tekstury
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+  }
+  textureImg.src="planets.png"; 
+
+  //Macierze opisujące położenie wirtualnej kamery w przestrzenie 3D
+  let aspect = gl.viewportWidth/gl.viewportHeight;
+  let fov = 45.0 * Math.PI / 180.0; //Określenie pola widzenia kamery
+  let zFar = 1000.0; //Ustalenie zakresów renderowania sceny 3D (od obiektu najbliższego zNear do najdalszego zFar)
+  let zNear = 0.1;
+  uPMatrix = [
+   1.0/(aspect*Math.tan(fov/2)),0                         ,0                           ,  0,
+   0                         ,1.0/(Math.tan(fov/2))       ,0                           ,  0,
+   0                         ,0                           ,-(zFar+zNear)/(zFar-zNear)  , -1,
+   0                         ,0                           ,-(2*zFar*zNear)/(zFar-zNear), 0.0,
+  ];
+
+  Tick();
+} 
+
+// let angle = 45.0; //Macierz transformacji świata - określenie położenia kamery
+var angleZ = 0.0;
+var angleY = 40.0;
+var angleX = 40.0;
+var tz = -140.0; // odleglosc kamery
+var tx = -20.0;
+var ty = 0.0;
+
+function Tick()
+{  
+  let uMVMatrix = [
+  1,0,0,0, //Macierz jednostkowa
+  0,1,0,0,
+  0,0,1,0,
+  0,0,0,1
+  ];
+
+  let uMVRotZ = [
+  +Math.cos(angleZ*Math.PI/180.0),+Math.sin(angleZ*Math.PI/180.0),0,0,
+  -Math.sin(angleZ*Math.PI/180.0),+Math.cos(angleZ*Math.PI/180.0),0,0,
+  0,0,1,0,
+  0,0,0,1
+  ];
+
+  let uMVRotY = [
+  +Math.cos(angleY*Math.PI/180.0),0,-Math.sin(angleY*Math.PI/180.0),0,
+  0,1,0,0,
+  +Math.sin(angleY*Math.PI/180.0),0,+Math.cos(angleY*Math.PI/180.0),0,
+  0,0,0,1
+  ];
+
+  let uMVRotX = [
+  1,0,0,0,
+  0,+Math.cos(angleX*Math.PI/180.0),+Math.sin(angleX*Math.PI/180.0),0,
+  0,-Math.sin(angleX*Math.PI/180.0),+Math.cos(angleX*Math.PI/180.0),0,
+  0,0,0,1
+  ];
+
+  let uMVTranslateZ = [
+  1,0,0,0,
+  0,1,0,0,
+  0,0,1,0,
+  0,0,tz,1
+  ];
+
+  let uMVTranslateX = [
+    1, 0, 0, 0,
+    0, 1, 0, 0,
+    0, 0, 1, 0,
+    tx, 0, 0, 1
+  ];
+
+  let uMVTranslateY = [
+    1, 0, 0, 0,
+    0, 1, 0, 0,
+    0, 0, 1, 0,
+    0, ty, 0, 1
+  ];
+ 
+  uMVMatrix = MatrixMul(uMVMatrix,uMVRotX);
+  uMVMatrix = MatrixMul(uMVMatrix,uMVRotY);
+  uMVMatrix = MatrixMul(uMVMatrix,uMVRotZ);
+
+  uMVMatrix = MatrixMul(uMVMatrix,uMVTranslateZ);
+  uMVMatrix = MatrixMul(uMVMatrix,uMVTranslateY);
+  uMVMatrix = MatrixMul(uMVMatrix,uMVTranslateX);
+  //alert(uPMatrix);
+  
+  //Render Scene
+  gl.viewport(0, 0, gl.viewportWidth, gl.viewportHeight); 
+  gl.clearColor(0.0,0.0,0.1,1.0); //Wyczyszczenie obrazu kolorem czerwonym
+  gl.clearDepth(1.0);             //Wyczyścienie bufora głebi najdalszym planem
+  gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+  gl.useProgram(shaderProgram)   //Użycie przygotowanego programu shaderowego
+  
+  gl.enable(gl.DEPTH_TEST);           // Włączenie testu głębi - obiekty bliższe mają przykrywać obiekty dalsze
+  gl.depthFunc(gl.LEQUAL);            // 
+  
+  gl.uniformMatrix4fv(gl.getUniformLocation(shaderProgram, "uPMatrix"), false, new Float32Array(uPMatrix)); //Wgranie macierzy kamery do pamięci karty graficznej
+  gl.uniformMatrix4fv(gl.getUniformLocation(shaderProgram, "uMVMatrix"), false, new Float32Array(uMVMatrix));
+  
+  gl.enableVertexAttribArray(gl.getAttribLocation(shaderProgram, "aVertexPosition"));  //Przekazanie położenia
+  gl.bindBuffer(gl.ARRAY_BUFFER, vertexPositionBuffer);
+  gl.vertexAttribPointer(gl.getAttribLocation(shaderProgram, "aVertexPosition"), vertexPositionBuffer.itemSize, gl.FLOAT, false, 0, 0);
+  
+  gl.enableVertexAttribArray(gl.getAttribLocation(shaderProgram, "aVertexCoords"));  //Pass the geometry
+  gl.bindBuffer(gl.ARRAY_BUFFER, vertexCoordsBuffer);
+  gl.vertexAttribPointer(gl.getAttribLocation(shaderProgram, "aVertexCoords"), vertexCoordsBuffer.itemSize, gl.FLOAT, false, 0, 0);
+  
+  gl.activeTexture(gl.TEXTURE0);
+  gl.bindTexture(gl.TEXTURE_2D, textureBuffer);
+  gl.uniform1i(gl.getUniformLocation(shaderProgram, "uSampler"), 0);
+  
+  gl.drawArrays(gl.TRIANGLES, 0, vertexPositionBuffer.numItems*vertexPositionBuffer.itemSize); //Faktyczne wywołanie rendrowania
+   
+  setTimeout(Tick,100);
+}
+function handlekeydown(e)
+{
+ if(e.keyCode==87) angleX=angleX+1.0; //W
+ if(e.keyCode==83) angleX=angleX-1.0; //S
+ if(e.keyCode==68) angleY=angleY+1.0; // D
+ if(e.keyCode==65) angleY=angleY-1.0; // A
+ if(e.keyCode==81) angleZ=angleZ+1.0; // Q
+ if(e.keyCode==69) angleZ=angleZ-1.0; // E
+
+ if(e.keyCode==67) tz=tz+1; // C
+ if(e.keyCode==86) tz=tz-1 // V
+ if(e.keyCode==90) tx=tx+1; // Z
+ if(e.keyCode==88) tx=tx-1; // X
+  if(e.keyCode==70) ty=ty+1; // F
+  if(e.keyCode==71) ty=ty-1; // G
+}
+</script>
+</head>
+<body onload="startGL()" onkeydown="handlekeydown(event)">
+<canvas id="canvas3D" width="720" height="560" style="border: solid black 1px; width: auto; height: auto; min-width: 90vw; min-height: 90vh;"></canvas>
+</body>
+</html>
